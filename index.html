@@ -271,7 +271,7 @@ h1.page-h1{font-size:24px;font-weight:600;letter-spacing:-.02em;margin:0 0 4px;}
 <script>
 
 // ── VERSION (MAJOR.MINOR.MMDDYY) ────────────────────────────────────────────
-const APP_VERSION = '0.1.083126';
+const APP_VERSION = '0.2.083126';
 
 // ── BACKEND CONFIG ───────────────────────────────────────────────────────────
 // LIVE as of this build -- these are Twilight's own GetDirectory/GetProgress/
@@ -581,7 +581,7 @@ function renderLogin(){
       <div class="err-msg" id="lgErr"></div>
       <button class="btn btn-primary" style="margin-top:6px" onclick="doLogin()">Continue &rarr;</button>
       <div class="hint-line">We'll take you straight to your learning path.<br>Demo accounts: test.mod@centific.com &middot; test.admin@centific.com</div>
-      <div class="version-tag">v0.1.083126</div>
+      <div class="version-tag">v0.2.083126</div>
     </div>
   </div>`;
 }
@@ -679,9 +679,9 @@ function renderNoneGate(m, done){
     <button class="btn btn-primary" style="width:auto;" onclick="completeNone('${m.id}')">Continue &rarr;</button>
   </div>`;
 }
-async function completeNone(id){
+function completeNone(id){
   ME.doneIds.add(id);
-  await saveProgress(id, 'done', '');
+  saveProgress(id, 'done', ''); // fire-and-forget -- don't block the UI on a slow PA response
   renderView();
 }
 
@@ -701,45 +701,25 @@ function renderStubGate(m, done){
   </div>`;
 }
 function toggleStub(id){ stubChecked[id] = !stubChecked[id]; persistLocal(); renderView(); }
-async function completeStub(id){
+function completeStub(id){
   if(!stubChecked[id]) return;
   ME.doneIds.add(id);
-  await saveProgress(id, 'done', '');
+  saveProgress(id, 'done', ''); // fire-and-forget
   toast('Section marked complete.');
   renderView();
 }
 
-// -- read-only review of a completed module's quiz: shows every question
-// with the moderator's picked answer and the correct one highlighted, so
-// completing a module doesn't erase visibility into what was asked/answered.
-function renderQuizReview(m, qs){
-  const ans = quizAnswers[m.id];
-  if(!ans || Object.keys(ans).length === 0){
-    // completed on a different device / before local answer detail existed --
-    // nothing to show, but don't imply the module isn't actually done.
-    return `<div class="quiz-card"><div class="pill pill-green" style="margin-bottom:6px;">&#10003; Completed</div><div class="quiz-progress">Your answers aren't available to review on this device.</div></div>`;
-  }
-  const questions = qs.map((q,qi) => {
-    const picked = ans[qi];
-    const opts = q.opts.map((o,oi) => {
-      let cls = 'quiz-opt';
-      if(oi===q.a) cls += ' correct'; else if(oi===picked) cls += ' incorrect';
-      return `<div class="${cls}" style="cursor:default;">${o}</div>`;
-    }).join('');
-    return `<div style="margin-bottom:20px;"><div class="quiz-q" style="font-size:14.5px;margin-bottom:10px;">${qi+1}. ${q.q}</div>${opts}</div>`;
-  }).join('');
-  return `<div class="quiz-card"><div class="pill pill-green" style="margin-bottom:16px;">&#10003; Completed</div>${questions}</div>`;
-}
-
-// -- real per-module quiz (one question at a time, flagged not blocking) --
+// -- real per-module quiz (one question at a time, flagged not blocking).
+// Same single-question view whether or not the module is already done --
+// once done, options just stop being clickable and the Finish button is
+// replaced with a "Completed" pill. Back/dot-jump navigation always works,
+// so reviewing past answers never expands into a big list -- matches the
+// Maple pattern this was modeled on.
 function renderQuiz(m, done){
   const qs = getModQuestions(m.id);
   if(qs.length === 0){
     // safety net: a real module with no quiz defined yet behaves like a stub
     return renderStubGate(m, done);
-  }
-  if(done){
-    return renderQuizReview(m, qs);
   }
   if(!quizIdx[m.id]) quizIdx[m.id] = 0;
   if(!quizAnswers[m.id]) quizAnswers[m.id] = {};
@@ -758,16 +738,31 @@ function renderQuiz(m, done){
       if(oi===q.a) cls += ' correct';
       else if(oi===picked) cls += ' incorrect';
     }
-    return `<button class="${cls}" onclick="answerQuiz('${m.id}',${idx},${oi})">${o}</button>`;
+    // Once the module is done, answers are committed -- render as plain,
+    // non-interactive divs instead of buttons so reviewing never changes
+    // what was actually submitted.
+    return done
+      ? `<div class="${cls}" style="cursor:default;">${o}</div>`
+      : `<button class="${cls}" onclick="answerQuiz('${m.id}',${idx},${oi})">${o}</button>`;
   }).join('');
   const fbClass = answered ? (picked===q.a ? ' correct' : ' incorrect') : '';
-  const fb = answered ? `<div class="quiz-fb${fbClass}">${picked===q.a ? '&#10003; Correct.' : '&#10007; Not quite — the highlighted option is correct.'}</div>` : '';
+  const fb = answered ? `<div class="quiz-fb${fbClass}">${picked===q.a ? '&#10003; Correct.' : '&#10007; Not quite — the highlighted option is correct.'}</div>` : (done ? `<div class="quiz-fb">Answer not available to review on this device.</div>` : '');
   const backBtn = idx > 0 ? `<button class="btn btn-ghost" style="width:auto;margin-top:14px;margin-right:8px;" onclick="prevQuizQ('${m.id}')">&larr; Back</button>` : '';
-  const nav = idx < qs.length-1
-    ? `<button class="btn btn-secondary" style="width:auto;margin-top:14px;" ${answered?'':'disabled'} onclick="nextQuizQ('${m.id}',${qs.length})">Next question &rarr;</button>`
-    : `<button class="btn btn-primary" style="width:auto;margin-top:14px;" ${allAnswered?'':'disabled'} onclick="completeQuiz('${m.id}')">Finish module &rarr;</button>`;
+  let nav;
+  if(done){
+    nav = idx < qs.length-1
+      ? `<button class="btn btn-secondary" style="width:auto;margin-top:14px;" onclick="nextQuizQ('${m.id}',${qs.length})">Next question &rarr;</button>`
+      : '';
+  } else {
+    nav = idx < qs.length-1
+      ? `<button class="btn btn-secondary" style="width:auto;margin-top:14px;" ${answered?'':'disabled'} onclick="nextQuizQ('${m.id}',${qs.length})">Next question &rarr;</button>`
+      : `<button class="btn btn-primary" style="width:auto;margin-top:14px;" ${allAnswered?'':'disabled'} onclick="completeQuiz('${m.id}')">Finish module &rarr;</button>`;
+  }
+  const progressLine = done
+    ? `<div class="quiz-progress">Knowledge check &middot; question ${idx+1} of ${qs.length} &middot; <span style="color:var(--green-text);font-weight:600;">&#10003; Completed</span></div>`
+    : `<div class="quiz-progress">Knowledge check &middot; question ${idx+1} of ${qs.length}</div>`;
   return `<div class="quiz-card">
-    <div class="quiz-progress">Knowledge check &middot; question ${idx+1} of ${qs.length}</div>
+    ${progressLine}
     <div class="quiz-dots">${dots}</div>
     <div class="quiz-q">${q.q}</div>
     ${opts}${fb}
@@ -778,9 +773,9 @@ function answerQuiz(id, qi, oi){ quizAnswers[id][qi] = oi; persistLocal(); rende
 function nextQuizQ(id, total){ quizIdx[id] = Math.min(total-1, (quizIdx[id]||0)+1); renderView(); }
 function prevQuizQ(id){ quizIdx[id] = Math.max(0, (quizIdx[id]||0)-1); renderView(); }
 function jumpQuizQ(id, i){ if(quizAnswers[id] && quizAnswers[id][i] !== undefined){ quizIdx[id] = i; renderView(); } }
-async function completeQuiz(id){
+function completeQuiz(id){
   ME.doneIds.add(id);
-  await saveProgress(id, 'done', '');
+  saveProgress(id, 'done', ''); // fire-and-forget
   toast('Module complete.');
   renderView();
 }
@@ -838,13 +833,13 @@ function answerFinal(oi){ finalAnswers[finalIdx]=oi; renderNavTabsForFinal(); }
 function nextFinal(){ finalIdx = Math.min(FINAL_CHECK.length-1, finalIdx+1); renderNavTabsForFinal(); }
 function prevFinal(){ finalIdx = Math.max(0, finalIdx-1); renderNavTabsForFinal(); }
 function jumpFinal(i){ if(finalAnswers[i] !== undefined){ finalIdx = i; renderNavTabsForFinal(); } }
-async function submitFinal(){
+function submitFinal(){
   let correct=0;
   FINAL_CHECK.forEach((q,i)=>{ if(finalAnswers[i]===q.a) correct++; });
   const pct = Math.round((correct/FINAL_CHECK.length)*100);
   finalResult = {correct, total: FINAL_CHECK.length, pct};
   ME.finalScore = pct;
-  await saveProgress('final_check', 'done', pct);
+  saveProgress('final_check', 'done', pct); // fire-and-forget
   finalMode = 'result';
   renderNavTabsForFinal();
 }
