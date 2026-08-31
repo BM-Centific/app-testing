@@ -150,7 +150,7 @@ h1.page-h1{font-size:24px;font-weight:600;letter-spacing:-.02em;margin:0 0 4px;}
 .step-meta{font-size:12px;color:var(--text3);}
 .step-row.clickable{cursor:pointer;}
 .step-row.clickable:hover .step-title{color:var(--accent-ink);}
-.module-page{max-width:760px;}
+.module-page{max-width:760px;margin:0 auto;}
 .r-eyebrow{font-size:11.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--accent-ink);margin-bottom:8px;}
 .r-title{font-size:26px;font-weight:600;letter-spacing:-.02em;margin-bottom:6px;}
 .r-sub{font-size:14.5px;color:var(--text2);margin-bottom:8px;}
@@ -192,7 +192,9 @@ h1.page-h1{font-size:24px;font-weight:600;letter-spacing:-.02em;margin:0 0 4px;}
 .quiz-opt.picked{border-color:var(--accent);background:var(--accent-soft);}
 .quiz-opt.correct{border-color:var(--green);background:var(--green-bg);color:var(--green-text);}
 .quiz-opt.incorrect{border-color:var(--red);background:var(--red-bg);color:var(--red-text);}
-.quiz-fb{font-size:13.5px;line-height:1.55;margin-top:10px;padding:12px 14px;border-radius:10px;background:var(--bg3);color:var(--text2);}
+.quiz-fb{font-size:13.5px;line-height:1.55;margin-top:10px;padding:12px 14px;border-radius:10px;background:var(--bg3);color:var(--text2);font-weight:600;}
+.quiz-fb.correct{background:var(--green-bg);color:var(--green-text);}
+.quiz-fb.incorrect{background:var(--red-bg);color:var(--red-text);}
 .quiz-dots{display:flex;gap:6px;margin-bottom:16px;}
 .quiz-dot{width:8px;height:8px;border-radius:50%;background:var(--border-strong);}
 .quiz-dot.active{background:var(--accent);width:20px;border-radius:99px;}
@@ -272,15 +274,14 @@ h1.page-h1{font-size:24px;font-weight:600;letter-spacing:-.02em;margin:0 0 4px;}
 const APP_VERSION = '0.1.083126';
 
 // ── BACKEND CONFIG ───────────────────────────────────────────────────────────
-// PLACEHOLDER -- Twilight needs its OWN GetDirectory/GetProgress/SaveProgress
-// flows, cloned from Maple's or Pine's (Save As -> repoint to Twilight's own
-// Excel file -> re-copy each trigger URL below). Left BLANK on purpose: this
-// makes LIVE evaluate to false so the app safely runs on demo data until real
-// URLs are pasted in. See Twilight_PA_Setup_Guide.md for the full clone walkthrough.
+// LIVE as of this build -- these are Twilight's own GetDirectory/GetProgress/
+// SaveProgress flow URLs (cloned from Maple's). Not yet validated end-to-end
+// against a real Excel write -- see Twilight_Go_Live_Guide.md §2.5 for the
+// validation sequence to run before trusting this for a real cohort.
 const BACKEND = {
-  getDirectory: '',
-  getProgress : '',
-  saveProgress: ''
+  getDirectory: 'https://default9b415834803a4da0afdcfe6b1d52d6.49.environment.api.powerplatform.com:443/powerautomate/automations/direct/cu/28/workflows/5dcf35f94c3d42a8a506b2c55f127d24/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=pUSP7J8ZaHEjH7py2W3SXsONkiugK0hU7Xq0XeKtXSc',
+  getProgress : 'https://default9b415834803a4da0afdcfe6b1d52d6.49.environment.api.powerplatform.com:443/powerautomate/automations/direct/cu/00/workflows/ddf27ba16d3e498eb87c37b8b90d8473/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=Qf3nyl94cSmqkx8tz_fm8atNGCbjPJ03XFVEnD94bfY',
+  saveProgress: 'https://default9b415834803a4da0afdcfe6b1d52d6.49.environment.api.powerplatform.com:443/powerautomate/automations/direct/cu/31/workflows/846fcf03fd0847f898c7f524f3608d39/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=47NSfZcYxEN8kREZ5BAMGvm36OrLDNBlegRt8x1BwxA'
 };
 const LIVE = /^https?:\/\//.test(BACKEND.getDirectory);
 
@@ -441,9 +442,21 @@ function loadData(){
 async function saveProgress(moduleId, status, score){
   if(!LIVE || !/^https?:\/\//.test(BACKEND.saveProgress)) return;
   try{
-    await fetch(BACKEND.saveProgress, {method:'POST', headers:{'Content-Type':'text/plain'},
+    const res = await fetch(BACKEND.saveProgress, {method:'POST', headers:{'Content-Type':'text/plain'},
       body: JSON.stringify({email: ME.email, moduleId, status, score: (score==null?'':score)})});
-  }catch(e){ console.error('[Twilight] saveProgress failed:', e); }
+    // Fire-and-forget by design (a failed save just means the moderator
+    // re-does that checkbox next load) -- but DO log the HTTP status, since
+    // fetch() only rejects on a network-level failure, never on a PA flow
+    // returning 400/401/etc. Without this, a misconfigured flow (wrong
+    // table binding, wiped Advanced Parameters after a Save-As clone) fails
+    // 100% silently -- the UI still shows progress because doneIds is
+    // updated in-memory regardless of whether the write actually landed.
+    if(!res.ok){
+      console.warn('[Twilight] saveProgress returned', res.status, '-- check the SaveProgress flow (Table binding / Advanced Parameters / trigger set to Anyone). Progress is NOT confirmed saved to Excel.', {moduleId, status, score});
+    } else {
+      console.log('[Twilight] saveProgress OK for', moduleId);
+    }
+  }catch(e){ console.error('[Twilight] saveProgress network failure (CORS, DNS, or offline) for', moduleId, ':', e); }
 }
 function progressFor(email){
   if(LIVE && window._PROGRESS){
@@ -623,11 +636,16 @@ function vPath(){
 
 function openModule(i){ CUR_MOD = i; VIEW = 'module'; renderNavTabs(); renderView(); window.scrollTo(0,0); }
 function backToPath(){ VIEW='path'; renderNavTabs(); renderView(); window.scrollTo(0,0); }
+function continueFromModule(){
+  if(CUR_MOD < MODULES.length-1){ openModule(CUR_MOD+1); }
+  else { backToPath(); }
+}
 
 // ── MODULE VIEWER ────────────────────────────────────────────────────────────
 function vModule(){
   const m = MODULES[CUR_MOD];
   const done = isModuleDone(m.id);
+  const isLast = CUR_MOD === MODULES.length-1;
   let gate;
   if(m.gate === 'none'){
     gate = renderNoneGate(m, done);
@@ -645,7 +663,7 @@ function vModule(){
     ${gate}
     <div class="mod-nav-row">
       <button class="btn btn-ghost" onclick="backToPath()">&larr; Back to path</button>
-      ${done ? `<button class="btn btn-secondary" onclick="backToPath()">Continue &rarr;</button>` : ''}
+      ${done ? `<button class="btn btn-secondary" onclick="continueFromModule()">${isLast ? 'Back to path' : 'Continue to next module'} &rarr;</button>` : ''}
     </div>
   </div>`;
 }
@@ -691,6 +709,28 @@ async function completeStub(id){
   renderView();
 }
 
+// -- read-only review of a completed module's quiz: shows every question
+// with the moderator's picked answer and the correct one highlighted, so
+// completing a module doesn't erase visibility into what was asked/answered.
+function renderQuizReview(m, qs){
+  const ans = quizAnswers[m.id];
+  if(!ans || Object.keys(ans).length === 0){
+    // completed on a different device / before local answer detail existed --
+    // nothing to show, but don't imply the module isn't actually done.
+    return `<div class="quiz-card"><div class="pill pill-green" style="margin-bottom:6px;">&#10003; Completed</div><div class="quiz-progress">Your answers aren't available to review on this device.</div></div>`;
+  }
+  const questions = qs.map((q,qi) => {
+    const picked = ans[qi];
+    const opts = q.opts.map((o,oi) => {
+      let cls = 'quiz-opt';
+      if(oi===q.a) cls += ' correct'; else if(oi===picked) cls += ' incorrect';
+      return `<div class="${cls}" style="cursor:default;">${o}</div>`;
+    }).join('');
+    return `<div style="margin-bottom:20px;"><div class="quiz-q" style="font-size:14.5px;margin-bottom:10px;">${qi+1}. ${q.q}</div>${opts}</div>`;
+  }).join('');
+  return `<div class="quiz-card"><div class="pill pill-green" style="margin-bottom:16px;">&#10003; Completed</div>${questions}</div>`;
+}
+
 // -- real per-module quiz (one question at a time, flagged not blocking) --
 function renderQuiz(m, done){
   const qs = getModQuestions(m.id);
@@ -699,7 +739,7 @@ function renderQuiz(m, done){
     return renderStubGate(m, done);
   }
   if(done){
-    return `<div class="quiz-card"><div class="pill pill-green">&#10003; Completed</div></div>`;
+    return renderQuizReview(m, qs);
   }
   if(!quizIdx[m.id]) quizIdx[m.id] = 0;
   if(!quizAnswers[m.id]) quizAnswers[m.id] = {};
@@ -708,7 +748,10 @@ function renderQuiz(m, done){
   const picked = quizAnswers[m.id][idx];
   const answered = picked !== undefined;
   const allAnswered = qs.every((_,i)=> quizAnswers[m.id][i] !== undefined);
-  const dots = qs.map((_,i)=>`<div class="quiz-dot${i===idx?' active':''}${quizAnswers[m.id][i]!==undefined?' answered':''}"></div>`).join('');
+  const dots = qs.map((_,i)=>{
+    const ans = quizAnswers[m.id][i] !== undefined;
+    return `<div class="quiz-dot${i===idx?' active':''}${ans?' answered':''}"${ans?` onclick="jumpQuizQ('${m.id}',${i})" style="cursor:pointer;"`:''}></div>`;
+  }).join('');
   const opts = q.opts.map((o,oi)=>{
     let cls = 'quiz-opt';
     if(answered){
@@ -717,7 +760,9 @@ function renderQuiz(m, done){
     }
     return `<button class="${cls}" onclick="answerQuiz('${m.id}',${idx},${oi})">${o}</button>`;
   }).join('');
-  const fb = answered ? `<div class="quiz-fb">${picked===q.a ? 'Correct.' : 'Not quite — the highlighted option is correct.'}</div>` : '';
+  const fbClass = answered ? (picked===q.a ? ' correct' : ' incorrect') : '';
+  const fb = answered ? `<div class="quiz-fb${fbClass}">${picked===q.a ? '&#10003; Correct.' : '&#10007; Not quite — the highlighted option is correct.'}</div>` : '';
+  const backBtn = idx > 0 ? `<button class="btn btn-ghost" style="width:auto;margin-top:14px;margin-right:8px;" onclick="prevQuizQ('${m.id}')">&larr; Back</button>` : '';
   const nav = idx < qs.length-1
     ? `<button class="btn btn-secondary" style="width:auto;margin-top:14px;" ${answered?'':'disabled'} onclick="nextQuizQ('${m.id}',${qs.length})">Next question &rarr;</button>`
     : `<button class="btn btn-primary" style="width:auto;margin-top:14px;" ${allAnswered?'':'disabled'} onclick="completeQuiz('${m.id}')">Finish module &rarr;</button>`;
@@ -725,11 +770,14 @@ function renderQuiz(m, done){
     <div class="quiz-progress">Knowledge check &middot; question ${idx+1} of ${qs.length}</div>
     <div class="quiz-dots">${dots}</div>
     <div class="quiz-q">${q.q}</div>
-    ${opts}${fb}${nav}
+    ${opts}${fb}
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">${backBtn}${nav}</div>
   </div>`;
 }
 function answerQuiz(id, qi, oi){ quizAnswers[id][qi] = oi; persistLocal(); renderView(); }
 function nextQuizQ(id, total){ quizIdx[id] = Math.min(total-1, (quizIdx[id]||0)+1); renderView(); }
+function prevQuizQ(id){ quizIdx[id] = Math.max(0, (quizIdx[id]||0)-1); renderView(); }
+function jumpQuizQ(id, i){ if(quizAnswers[id] && quizAnswers[id][i] !== undefined){ quizIdx[id] = i; renderView(); } }
 async function completeQuiz(id){
   ME.doneIds.add(id);
   await saveProgress(id, 'done', '');
@@ -759,13 +807,18 @@ function vFinal(){
   const q = FINAL_CHECK[finalIdx];
   const picked = finalAnswers[finalIdx];
   const answered = picked !== undefined;
-  const dots = FINAL_CHECK.map((_,i)=>`<div class="quiz-dot${i===finalIdx?' active':''}${finalAnswers[i]!==undefined?' answered':''}"></div>`).join('');
+  const dots = FINAL_CHECK.map((_,i)=>{
+    const ans = finalAnswers[i] !== undefined;
+    return `<div class="quiz-dot${i===finalIdx?' active':''}${ans?' answered':''}"${ans?` onclick="jumpFinal(${i})" style="cursor:pointer;"`:''}></div>`;
+  }).join('');
   const opts = q.opts.map((o,oi)=>{
     let cls='quiz-opt';
     if(answered){ if(oi===q.a) cls+=' correct'; else if(oi===picked) cls+=' incorrect'; }
     return `<button class="${cls}" onclick="answerFinal(${oi})">${o}</button>`;
   }).join('');
-  const fb = answered ? `<div class="quiz-fb">${picked===q.a?'Correct.':'Not quite — the highlighted option is correct.'}</div>` : '';
+  const fbClass2 = answered ? (picked===q.a ? ' correct' : ' incorrect') : '';
+  const fb = answered ? `<div class="quiz-fb${fbClass2}">${picked===q.a?'&#10003; Correct.':'&#10007; Not quite — the highlighted option is correct.'}</div>` : '';
+  const backBtn2 = finalIdx > 0 ? `<button class="btn btn-ghost" style="width:auto;margin-top:14px;margin-right:8px;" onclick="prevFinal()">&larr; Back</button>` : '';
   const nav = finalIdx < FINAL_CHECK.length-1
     ? `<button class="btn btn-secondary" style="width:auto;margin-top:14px;" ${answered?'':'disabled'} onclick="nextFinal()">Next &rarr;</button>`
     : `<button class="btn btn-primary" style="width:auto;margin-top:14px;" ${answered?'':'disabled'} onclick="submitFinal()">See result &rarr;</button>`;
@@ -776,12 +829,15 @@ function vFinal(){
     <div class="quiz-card">
       <div class="quiz-dots">${dots}</div>
       <div class="quiz-q">${q.q}</div>
-      ${opts}${fb}${nav}
+      ${opts}${fb}
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">${backBtn2}${nav}</div>
     </div>
   </div>`;
 }
 function answerFinal(oi){ finalAnswers[finalIdx]=oi; renderNavTabsForFinal(); }
 function nextFinal(){ finalIdx = Math.min(FINAL_CHECK.length-1, finalIdx+1); renderNavTabsForFinal(); }
+function prevFinal(){ finalIdx = Math.max(0, finalIdx-1); renderNavTabsForFinal(); }
+function jumpFinal(i){ if(finalAnswers[i] !== undefined){ finalIdx = i; renderNavTabsForFinal(); } }
 async function submitFinal(){
   let correct=0;
   FINAL_CHECK.forEach((q,i)=>{ if(finalAnswers[i]===q.a) correct++; });
@@ -915,6 +971,20 @@ function vCurriculum(){
 }
 
 // ── BOOT ─────────────────────────────────────────────────────────────────────
+// Local-file warning: modern Chrome/Edge block outbound fetch() from a
+// file:// origin to remote HTTPS endpoints, so BACKEND calls silently never
+// leave the browser when someone double-clicks this file instead of opening
+// it from a hosted URL. That looks identical to "the flow is broken" (zero
+// Power Automate run history) but is actually a browser restriction, not an
+// app or flow bug. Appended to <html> (a sibling of <body>), not inside
+// <body>, so it survives every full-body innerHTML re-render.
+if(location.protocol === 'file:'){
+  const w = document.createElement('div');
+  w.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;background:#F59E0B;color:#1a1207;font-family:-apple-system,\'SF Pro Text\',sans-serif;font-size:12.5px;font-weight:600;padding:9px 16px;text-align:center;box-shadow:0 2px 10px rgba(0,0,0,.25);';
+  w.textContent = '⚠ Opened as a local file (file://) — network calls to Power Automate are blocked by the browser from this origin, so progress will not sync. Open this from a hosted URL (e.g. GitHub Pages) to test the live backend.';
+  document.documentElement.appendChild(w);
+}
+
 // Prefetch starts the instant the page loads (not on a click) -- see
 // canonical pattern in Verdi_App_Family_Master_Context.md §20.1. If there's
 // no auto-resume candidate, show the login screen immediately rather than
