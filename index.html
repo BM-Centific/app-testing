@@ -487,6 +487,11 @@ function restoreLocalSession(email){
       quizAnswers = d.quizAnswers || {};
       stubChecked = d.stubChecked || {};
       checklistOpen = d.checklistOpen || {};
+      // Only keep quiz answers for modules the moderator has already completed.
+      // Incomplete modules should start fresh — not show prior session selections.
+      if(ME && ME.doneIds){
+        Object.keys(quizAnswers).forEach(id => { if(!ME.doneIds.has(id)) delete quizAnswers[id]; });
+      }
     }
     if(d.theme) document.documentElement.setAttribute('data-theme', d.theme);
   }catch(e){}
@@ -540,7 +545,7 @@ async function saveProgress(moduleId, status, score){
   if(!LIVE || !/^https?:\/\//.test(BACKEND.saveProgress)) return;
   try{
     const _dur = moduleStartTimes[moduleId]
-      ? Math.max(1, Math.round((Date.now() - moduleStartTimes[moduleId]) / 60000))
+      ? Math.max(1, Math.round((Date.now() - moduleStartTimes[moduleId]) / 1000))
       : null;
     const res = await fetch(BACKEND.saveProgress, {method:'POST', headers:{'Content-Type':'text/plain'},
       body: JSON.stringify({email: ME.email, moduleId, status, score: (score==null?'':score), duration: _dur})});
@@ -585,7 +590,7 @@ function buildCohortRow(r){
     : [];
   const mods = MODULES.map(m => {
     const prog = rawRows.find(pr => (pr.ModuleID||pr.moduleId) === m.id);
-    return {id: m.id, completed: prog ? String(prog.Status||prog.status||'')==='done' : false, score: prog ? Number(prog.Score||prog.score||0) : 0, duration: prog ? (prog.Duration || prog.duration || null) : null};
+    return {id: m.id, completed: prog ? String(prog.Status||prog.status||'')==='done' : false, score: prog ? Number(prog.Score||prog.score||0) : 0, duration: prog ? (Number(prog.Duration || prog.duration) || null) : null};
   });
   return {email:r.email, name:r.name, cohort:r.cohort, loc:r.loc, done:p.doneIds.size, finalScore:p.finalScore, status, certified, mods};
 }
@@ -889,8 +894,12 @@ function nextQuizQ(id, total){ quizIdx[id] = Math.min(total-1, (quizIdx[id]||0)+
 function prevQuizQ(id){ quizIdx[id] = Math.max(0, (quizIdx[id]||0)-1); renderView(); }
 function jumpQuizQ(id, i){ if(quizAnswers[id] && quizAnswers[id][i] !== undefined){ quizIdx[id] = i; renderView(); } }
 function completeQuiz(id){
+  const qs = getModQuestions(id);
+  const answers = quizAnswers[id] || {};
+  const correct = qs.filter((q,i) => answers[i] === q.a).length;
+  const pct = qs.length > 0 ? Math.round((correct / qs.length) * 100) : 0;
   ME.doneIds.add(id);
-  saveProgress(id, 'done', ''); // fire-and-forget
+  saveProgress(id, 'done', pct); // fire-and-forget
   toast('Module complete.');
   renderView();
 }
@@ -1026,20 +1035,20 @@ function vDash(){
     (r.mods||[]).filter(m => m.duration && m.duration > 0).map(m => m.duration)
   );
   const avgTime = completionTimes.length
-    ? Math.round(completionTimes.reduce((a,b)=>a+b,0)/completionTimes.length) + ' min'
+    ? fmtDur(Math.round(completionTimes.reduce((a,b)=>a+b,0)/completionTimes.length))
     : '—';
   const filtered = COHORT.filter(c => adminFilter==='all' ? true : c.status===adminFilter);
   const rows = filtered.map(c => {
     const pct = Math.round((c.done/MODULES.length)*100);
     const pillMap = {not_started:['pill-gray','Not started'], in_progress:['pill-blue','In progress'], awaiting_final:['pill-amber','Awaiting final check'], certified:['pill-green','Certified']};
     const [pc,pt] = pillMap[c.status];
-    const totalMin = (c.mods||[]).reduce((s,m)=>s+(m.duration||0),0);
+    const totalSec = (c.mods||[]).reduce((s,m)=>s+(Number(m.duration)||0),0);
     return `<tr style="cursor:pointer" onclick="openModDetail('${c.email}')" title="View ${c.name}'s progress">
       <td><div class="mod-row-name"><div class="mod-avatar">${c.name.charAt(0)}</div><div><div style="font-weight:600;">${c.name}</div><div style="font-size:11.5px;color:var(--text3);">${c.email}</div></div></div></td>
       <td>${c.done} / ${MODULES.length} (${pct}%)</td>
       <td>${c.finalScore===null?'—':c.finalScore+'%'}</td>
       <td><span class="pill ${pc}">${pt}</span></td>
-      <td>${totalMin > 0 ? totalMin + ' min' : '—'}</td>
+      <td>${totalSec > 0 ? fmtDur(totalSec) : '—'}</td>
     </tr>`;
   }).join('');
   return `<h1 class="page-h1">Cohort Dashboard</h1><p class="page-sub">Sesame moderators &middot; onboarding progress</p>
@@ -1056,6 +1065,13 @@ function vDash(){
   </div>
   <div class="card"><div class="admin-tbl-wrap"><table class="admin-tbl"><tr><th>Moderator</th><th>Modules</th><th>Final check</th><th>Status</th><th>Time</th></tr>${rows||'<tr><td colspan="5" style="color:var(--text3);">No moderators match this filter.</td></tr>'}</table></div></div>`;
 }
+function fmtDur(secs){
+  if(!secs || secs <= 0) return '';
+  const m = Math.floor(secs / 60);
+  const s = secs % 60;
+  if(m === 0) return s + 's';
+  return s > 0 ? m + 'm ' + s + 's' : m + 'm';
+}
 function setAdminFilter(f){ adminFilter=f; renderView(); }
 function openModDetail(email){ detailEmail=email; VIEW='detail'; renderView(); }
 
@@ -1065,12 +1081,12 @@ function vModDetail(){
   if(!c) return `<p>Moderator not found.</p>`;
   const pillMap = {not_started:['pill-gray','Not started'], in_progress:['pill-blue','In progress'], awaiting_final:['pill-amber','Awaiting final check'], certified:['pill-green','Certified']};
   const [pc,pt] = pillMap[c.status];
-  const totalMin = (c.mods||[]).reduce((s,m)=>s+(m.duration||0),0);
+  const totalSec = (c.mods||[]).reduce((s,m)=>s+(Number(m.duration)||0),0);
   const pct = Math.round((c.done/MODULES.length)*100);
   const modRows = MODULES.map((m,i) => {
     const prog = (c.mods||[]).find(p=>p.id===m.id) || {completed:false, score:0, duration:null};
     const done = prog.completed;
-    const dur = prog.duration ? `<span style="color:var(--text3);font-size:.8rem;margin-left:6px;">${prog.duration}m</span>` : '';
+    const dur = prog.duration ? `<span style="color:var(--text3);font-size:.8rem;margin-left:6px;">${fmtDur(Number(prog.duration))}</span>` : '';
     const scoreTag = (prog.score && prog.score > 0) ? `<span class="pill pill-blue" style="margin-left:8px;font-size:.75rem;">${prog.score}% quiz</span>` : '';
     const action = done
       ? `<span style="color:var(--accent);font-size:1.1rem;">&#10003;</span>`
@@ -1091,7 +1107,7 @@ function vModDetail(){
         <div style="color:var(--text3);font-size:.85rem">${c.email}${c.cohort?' &middot; Cohort '+c.cohort:''}</div>
       </div>
       <span class="pill ${pc}">${pt}</span>
-      ${totalMin>0?`<span style="font-size:.85rem;color:var(--text2)">${totalMin} min total</span>`:''}
+      ${totalSec>0?`<span style="font-size:.85rem;color:var(--text2)">${fmtDur(totalSec)} total</span>`:''}
     </div>
     <div class="card" style="margin-bottom:16px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
