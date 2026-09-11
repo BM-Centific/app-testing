@@ -356,7 +356,7 @@ body{overflow-x:hidden;}
 <script>
 
 // ── VERSION (MAJOR.MINOR.MMDDYY) ────────────────────────────────────────────
-const APP_VERSION = 'v0.1.0.090926-sesame';
+const APP_VERSION = 'v1.2.0.091126-sesame';
 
 // ── BACKEND CONFIG ───────────────────────────────────────────────────────────
 // LIVE as of this build -- these are Sesame's own GetDirectory/GetProgress/
@@ -520,6 +520,9 @@ function normDirRow(u){
   };
 }
 let DATA_READY = false, _loadPromise = null;
+let adminLastRefresh = null;   // timestamp of last admin data fetch
+let adminPollTimer = null;     // setInterval handle for admin auto-refresh
+const ADMIN_POLL_MS = 60000;   // refresh every 60 s
 function loadData(){
   if(_loadPromise) return _loadPromise;
   _loadPromise = (async () => {
@@ -541,6 +544,33 @@ function loadData(){
   })();
   return _loadPromise;
 }
+// ── ADMIN AUTO-REFRESH ────────────────────────────────────────────────────────
+async function refreshAdminData(){
+  if(!LIVE){ adminLastRefresh = Date.now(); if(VIEW==='dash'||VIEW==='detail') renderView(); return; }
+  try{
+    const res = await Promise.all([apiGet(BACKEND.getDirectory), apiGet(BACKEND.getProgress)]);
+    DIR = res[0].map(normDirRow).filter(r => r.active !== 'no');
+    window._PROGRESS = res[1];
+    COHORT = DIR.filter(r=>r.role==='moderator').map(r => buildCohortRow(r));
+    mergeLocalMods();
+    adminLastRefresh = Date.now();
+    if(ROLE==='admin' && (VIEW==='dash'||VIEW==='detail')) renderView();
+  }catch(e){ console.warn('[Sesame] admin refresh failed:', e); }
+}
+function startAdminPoll(){
+  stopAdminPoll();
+  if(!LIVE) return;
+  adminPollTimer = setInterval(refreshAdminData, ADMIN_POLL_MS);
+}
+function stopAdminPoll(){
+  if(adminPollTimer){ clearInterval(adminPollTimer); adminPollTimer = null; }
+}
+async function adminRefreshBtn(){
+  const btn = document.getElementById('adminRefreshBtn');
+  if(btn){ btn.disabled = true; btn.textContent = '↻ Refreshing…'; }
+  await refreshAdminData();
+}
+
 async function saveProgress(moduleId, status, score){
   if(!LIVE || !/^https?:\/\//.test(BACKEND.saveProgress)) return;
   try{
@@ -623,6 +653,7 @@ async function doLogin(){
   startApp(rec.role);
 }
 function logout(){
+  stopAdminPoll();
   document.body.innerHTML = '';
   ME = null; ROLE = null;
   try{ localStorage.removeItem(LAST_LOGIN_KEY); }catch(e){}
@@ -643,6 +674,7 @@ function toast(m){
 // ── APP SHELL ────────────────────────────────────────────────────────────────
 function startApp(role){
   ROLE = role; VIEW = (role==='admin') ? 'dash' : 'path';
+  if(role==='admin'){ adminLastRefresh = Date.now(); startAdminPoll(); }
   document.body.innerHTML = `
     <div class="shell" id="shell">
       <div class="page-wrap">
@@ -1051,7 +1083,15 @@ function vDash(){
       <td>${totalSec > 0 ? fmtDur(totalSec) : '—'}</td>
     </tr>`;
   }).join('');
-  return `<h1 class="page-h1">Cohort Dashboard</h1><p class="page-sub">Sesame moderators &middot; onboarding progress</p>
+  const nowTs = Date.now();
+  const diffSec = adminLastRefresh ? Math.round((nowTs - adminLastRefresh) / 1000) : null;
+  const lastUpdStr = diffSec === null ? '' : diffSec < 5 ? 'just now' : diffSec < 60 ? diffSec + 's ago' : Math.floor(diffSec/60) + 'min ago';
+  return `<div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:2px">
+    <h1 class="page-h1" style="margin:0">Cohort Dashboard</h1>
+    <span style="margin-left:auto;font-size:12px;color:var(--text3)">${lastUpdStr ? 'Updated ' + lastUpdStr : ''}</span>
+    <button id="adminRefreshBtn" class="btn-ghost" onclick="adminRefreshBtn()" style="padding:4px 10px;font-size:12px;border-radius:7px" title="Fetch latest data from Excel">&#8635; Refresh</button>
+  </div>
+  <p class="page-sub" style="margin-top:4px">Sesame moderators &middot; onboarding progress</p>
   <div class="kpi-grid">
     <div class="kpi-card"><div class="kpi-val">${total}</div><div class="kpi-lbl">Enrolled</div></div>
     <div class="kpi-card"><div class="kpi-val">${inProgress}</div><div class="kpi-lbl">In progress</div></div>
