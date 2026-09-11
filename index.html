@@ -1249,7 +1249,7 @@ async function submitManageModerator(payload){
   try{
     await fetch(BACKEND.manageModerator, {
       method:'POST',
-      headers:{'Content-Type':'text/plain'},
+      headers:{'Content-Type':'application/json'},
       body: JSON.stringify(payload)
     });
   }catch(e){ console.warn('[Sesame] ManageModerator PA call failed (non-blocking)', e); }
@@ -1264,7 +1264,7 @@ function addModeratorInApp(name, email, cohort){
   if(li >= 0){ localArr[li] = entry; } else { localArr.push(entry); }
   saveLocalMods(localArr);
   COHORT = DIR.filter(r=>r.role==='moderator').map(r=>buildCohortRow(r));
-  submitManageModerator({action:'add', name, email:email.toLowerCase(), cohort});
+  submitManageModerator({action:'add', name, email:email.toLowerCase(), role:'moderator', cohort, active:'yes'});
   showToast('Moderator added ✓');
   renderView();
 }
