@@ -942,9 +942,9 @@ function renderQuiz(m, done){
   const idx = quizIdx[m.id];
   const q = qs[idx];
   const wrongKey = m.id+':'+idx;
-  const correctPick = quizAnswers[m.id][idx]; // undefined until they get it right
-  const answeredCorrectly = correctPick !== undefined;
-  const justWrong = quizWrongPick[wrongKey];
+  const pickedOi = quizAnswers[m.id][idx];       // undefined until any answer selected
+  const answeredThisQ = pickedOi !== undefined;
+  const answeredCorrectly = answeredThisQ && pickedOi === q.a;
   const correct = qs.filter((q2,i) => quizAnswers[m.id][i] === q2.a).length;
   const allAnswered = qs.every((_,i)=> quizAnswers[m.id][i] !== undefined);
   const retryBtn = (done && !retrying) ? `<button class="btn btn-ghost" onclick="retryModuleQuiz('${m.id}')" style="width:auto;margin-top:14px;">&#8635; Retry quiz</button>` : '';
@@ -952,24 +952,22 @@ function renderQuiz(m, done){
     const ans = quizAnswers[m.id][i] !== undefined;
     return `<div class="quiz-dot${i===idx?' active':''}${ans?' answered':''}"${ans?` onclick="jumpQuizQ('${m.id}',${i})" style="cursor:pointer;"`:''}></div>`;
   }).join('');
-  const frozen = done || answeredCorrectly;
+  const frozen = done || answeredThisQ;
   const opts = q.opts.map((o,oi)=>{
     let cls = 'quiz-opt';
-    if(answeredCorrectly && oi===q.a) cls += ' correct';
-    else if(!answeredCorrectly && justWrong===oi) cls += ' incorrect';
-    // Once correct (or the module is already done), freeze the question --
-    // render as plain divs instead of buttons so nothing further can change
-    // what was actually submitted. While still wrong, keep every option
-    // clickable so the person can keep trying.
+    if(frozen){
+      if(oi === q.a) cls += ' correct';
+      else if(oi === pickedOi) cls += ' incorrect';
+    }
     return frozen
       ? `<div class="${cls}" style="cursor:default;">${o}</div>`
       : `<button class="${cls}" onclick="answerQuiz('${m.id}',${idx},${oi})">${o}</button>`;
   }).join('');
   let fb = '';
-  if(answeredCorrectly){
-    fb = `<div class="quiz-fb correct">&#10003; Correct.</div>`;
-  } else if(justWrong !== undefined){
-    fb = `<div class="quiz-fb incorrect">&#10007; Not quite — give it another try.</div>`;
+  if(answeredThisQ){
+    fb = answeredCorrectly
+      ? `<div class="quiz-fb correct">&#10003; Correct.</div>`
+      : `<div class="quiz-fb incorrect">&#10007; Not quite.</div>`;
   } else if(done){
     fb = `<div class="quiz-fb">Answer not available to review on this device.</div>`;
   }
@@ -985,7 +983,7 @@ function renderQuiz(m, done){
       : '';
   } else {
     nav = idx < qs.length-1
-      ? `<button class="btn btn-secondary" style="width:auto;margin-top:14px;" ${answeredCorrectly?'':'disabled'} onclick="nextQuizQ('${m.id}',${qs.length})">Next question &rarr;</button>`
+      ? `<button class="btn btn-secondary" style="width:auto;margin-top:14px;" ${answeredThisQ?'':'disabled'} onclick="nextQuizQ('${m.id}',${qs.length})">Next question &rarr;</button>`
       : `<button class="btn btn-primary" style="width:auto;margin-top:14px;" ${allAnswered?'':'disabled'} onclick="completeQuiz('${m.id}')">Finish module &rarr;</button>`;
   }
   const progressLine = done
@@ -1007,16 +1005,10 @@ function renderQuiz(m, done){
   </div>`;
 }
 function answerQuiz(id, qi, oi){
-  const qs = getModQuestions(id);
-  const q = qs[qi];
-  const key = id+':'+qi;
-  if(oi === q.a){
-    quizAnswers[id][qi] = oi;
-    delete quizWrongPick[key];
-    persistLocal();
-  } else {
-    quizWrongPick[key] = oi;
-  }
+  if(!quizAnswers[id]) quizAnswers[id] = {};
+  if(quizAnswers[id][qi] !== undefined) return; // already answered, locked
+  quizAnswers[id][qi] = oi; // store any answer (right or wrong)
+  persistLocal();
   renderView();
 }
 function nextQuizQ(id, total){ quizIdx[id] = Math.min(total-1, (quizIdx[id]||0)+1); renderView(); }
