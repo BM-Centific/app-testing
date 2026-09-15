@@ -952,7 +952,7 @@ function renderQuiz(m, done){
     const ans = quizAnswers[m.id][i] !== undefined;
     return `<div class="quiz-dot${i===idx?' active':''}${ans?' answered':''}"${ans?` onclick="jumpQuizQ('${m.id}',${i})" style="cursor:pointer;"`:''}></div>`;
   }).join('');
-  const frozen = done || answeredThisQ;
+  const frozen = (done && !retrying) || answeredThisQ;
   const opts = q.opts.map((o,oi)=>{
     let cls = 'quiz-opt';
     if(frozen){
@@ -968,8 +968,6 @@ function renderQuiz(m, done){
     fb = answeredCorrectly
       ? `<div class="quiz-fb correct">&#10003; Correct.</div>`
       : `<div class="quiz-fb incorrect">&#10007; Not quite.</div>`;
-  } else if(done){
-    fb = `<div class="quiz-fb">Answer not available to review on this device.</div>`;
   }
   // Build attempt history line
   const pastScores = moduleAttemptScores[m.id] || [];
@@ -977,7 +975,7 @@ function renderQuiz(m, done){
     ? `<div style="font-size:12px;color:var(--text3);margin-top:8px;">Past attempts: ${pastScores.map((s,i)=>`<span style="margin-right:6px;">Attempt ${i+1}: <strong style="color:var(--text);">${s}%</strong></span>`).join('')}</div>` : '';
   const backBtn = idx > 0 ? `<button class="btn btn-ghost" style="width:auto;margin-top:14px;margin-right:8px;" onclick="prevQuizQ('${m.id}')">&larr; Back</button>` : '';
   let nav;
-  if(done){
+  if(done && !retrying){
     nav = idx < qs.length-1
       ? `<button class="btn btn-secondary" style="width:auto;margin-top:14px;" onclick="nextQuizQ('${m.id}',${qs.length})">Next question &rarr;</button>`
       : '';
@@ -986,10 +984,10 @@ function renderQuiz(m, done){
       ? `<button class="btn btn-secondary" style="width:auto;margin-top:14px;" ${answeredThisQ?'':'disabled'} onclick="nextQuizQ('${m.id}',${qs.length})">Next question &rarr;</button>`
       : `<button class="btn btn-primary" style="width:auto;margin-top:14px;" ${allAnswered?'':'disabled'} onclick="completeQuiz('${m.id}')">Finish module &rarr;</button>`;
   }
-  const progressLine = done
+  const progressLine = (done && !retrying)
     ? `<div class="quiz-progress">Knowledge check &middot; question ${idx+1} of ${qs.length} &middot; <span style="color:var(--green-text);font-weight:600;">&#10003; Completed</span></div>`
     : `<div class="quiz-progress">Knowledge check &middot; question ${idx+1} of ${qs.length}</div>`;
-  const scoreFooter = (allAnswered || done)
+  const scoreFooter = (allAnswered || (done && !retrying))
     ? `<div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;padding-top:12px;border-top:.5px solid var(--border);">
         <span style="font-size:13px;color:var(--text2);">Quiz score: <strong style="color:var(--accent-ink);">${correct}/${qs.length}</strong></span>
         ${retryBtn}
